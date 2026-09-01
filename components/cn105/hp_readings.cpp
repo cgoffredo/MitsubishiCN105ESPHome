@@ -365,9 +365,22 @@ void CN105Climate::getOperatingAndCompressorFreqFromResponsePacket() {
     // reset counter (because a reply indicates it is connected)
     this->nonResponseCounter = 0;
     receivedStatus.operating = data[4];
-    // Some models (e.g. PAA/PUZ combo) seem to have some noise on the compressor frequency sensor, even when not in operation.
-    // To avoid reporting random values, set the compressor frequency to 0 when the heatpump is not operating.
-    receivedStatus.compressorFrequency = (data[4]) ? data[3] : 0;
+
+    // PATCHED 2026-09-01: stock logic zeroed compressorFrequency whenever data[4]
+    // ("operating") read false, to avoid reporting sensor noise on models where
+    // that byte is noisy while genuinely idle. On this unit, data[4] is the SAME
+    // byte already known to be an unreliable "is it really running" indicator --
+    // see setActionIfOperatingTo() below and its stage-based fallback
+    // (use_as_operating_fallback, added for issue #277 on ducted units). Mirroring
+    // that exact fallback here instead of deleting the guard outright, so this
+    // stays as conservative as the already-proven-correct Action logic: report
+    // the real byte whenever EITHER operating is true OR stage indicates
+    // activity, and only fall back to 0 when neither says anything is happening.
+    bool stage_is_active = this->use_stage_for_operating_status_ &&
+        this->currentSettings.stage != nullptr &&
+        strcmp(this->currentSettings.stage, STAGE_MAP[0 /*IDLE*/]) != 0;
+    receivedStatus.compressorFrequency = (data[4] || stage_is_active) ? data[3] : 0;
+
     receivedStatus.inputPower = convert_input_power_to_W(float((data[5] << 8) | data[6]));
     receivedStatus.kWh = convert_energy_usage_to_kWh(float((data[7] << 8) | data[8]));
 
@@ -377,7 +390,6 @@ void CN105Climate::getOperatingAndCompressorFreqFromResponsePacket() {
     receivedStatus.runtimeHours = currentStatus.runtimeHours;
     this->statusChanged(receivedStatus);
 }
-
 void CN105Climate::getHVACOptionsFromResponsePacket() {
     //MSZ-LN25VG2W
     //FC 62 01 30 10 42 01 01 01 00 00 00 00 00 00 00 00 00 00 00 00 18
