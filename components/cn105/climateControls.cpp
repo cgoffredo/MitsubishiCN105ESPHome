@@ -228,6 +228,27 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
         if (call.get_target_temperature().has_value()) {
             this->setTargetTemperature(temp_single);
             ESP_LOGI("control", "Setting heatpump setpoint : %.1f", this->getTargetTemperature());
+
+            // PATCHED 2026-09-02: updateAction()'s CLIMATE_MODE_AUTO and
+            // CLIMATE_MODE_HEAT_COOL branches unconditionally compare current
+            // temperature against getTargetTemperatureLow()/High() to decide
+            // heating vs cooling vs idle -- regardless of whether dual-setpoint
+            // UI support is enabled. On a single-setpoint config (this branch),
+            // nothing ever wrote target_temperature_low/high, so that comparison
+            // ran against stale/default values with no relationship to the real
+            // setpoint (see the NaN-handling fix in localization.h for how badly
+            // that degraded in practice). Mirror the same half_span band
+            // handleSingleTargetInAutoOrDry() already builds for the dual-setpoint
+            // case, so the AUTO/HEAT_COOL action calculation has a real band
+            // derived from your actual setpoint, whether or not the dual-setpoint
+            // UI is turned on.
+            if (this->mode == climate::CLIMATE_MODE_AUTO || this->mode == climate::CLIMATE_MODE_HEAT_COOL) {
+                const float half_span = 2.0f;
+                this->setTargetTemperatureLow(temp_single - half_span);
+                this->setTargetTemperatureHigh(temp_single + half_span);
+                ESP_LOGD("control", "Single-setpoint AUTO/HEAT_COOL action band: %.1f => [%.1f - %.1f]",
+                    temp_single, this->getTargetTemperatureLow(), this->getTargetTemperatureHigh());
+            }
         }
     }
 
