@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace esphome {
@@ -18,8 +19,21 @@ namespace esphome {
         }
 
         float normalizeHeatpumpTemperatureToUiTemperature(const float c) {
-            if (fahrenheit_mode_ == FahrenheitMode::OFF || c == NAN) {
-                return c; // If disabled, return the Celsius value as is.
+            // PATCHED 2026-09-02: `c == NAN` is always false in IEEE754 (NaN never
+            // equals anything, including itself) -- this guard never actually
+            // caught a NaN input. A NaN would fall through to the lookup below,
+            // where it poisons every comparison in the upper_bound predicate and
+            // makes std::upper_bound land on the table's END iterator, silently
+            // returning the table's HIGHEST entry instead of propagating NaN.
+            // Verified (climateControls.cpp / updateAction()): for a single-setpoint
+            // config (no dual_setpoint), target_temperature_low/high are never
+            // written and sit at ESPHome's own NAN default forever -- so every read
+            // through here was silently resolving to ~30.5C/86.9F for BOTH
+            // thresholds, making updateAction()'s AUTO/HEAT_COOL deadband compare
+            // room temp against a phantom ceiling instead of the real setpoint or
+            // an honest "unknown". std::isnan() actually catches it.
+            if (fahrenheit_mode_ == FahrenheitMode::OFF || std::isnan(c)) {
+                return c; // If disabled (or input is NaN), return the value as is.
             }
 
             // Select the appropriate conversion table based on mode
@@ -52,8 +66,11 @@ namespace esphome {
         }
 
         float normalizeUiTemperatureToHeatpumpTemperature(const float c) {
-            if (fahrenheit_mode_ == FahrenheitMode::OFF || c == NAN) {
-                return c; // If disabled, return the Celsius value as is.
+            // PATCHED 2026-09-02: see identical fix + explanation above in
+            // normalizeHeatpumpTemperatureToUiTemperature -- same broken `c == NAN`
+            // check, same fallthrough into a NaN-poisoned std::upper_bound.
+            if (fahrenheit_mode_ == FahrenheitMode::OFF || std::isnan(c)) {
+                return c; // If disabled (or input is NaN), return the value as is.
             }
 
             // Select the appropriate conversion table based on mode
