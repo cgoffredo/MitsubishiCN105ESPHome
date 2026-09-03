@@ -362,15 +362,6 @@ void CN105Climate::getOperatingAndCompressorFreqFromResponsePacket() {
     ESP_LOGD("Decoder", "[0x06 is status]");
     //this->last_received_packet_sensor->publish_state("0x62-> 0x06: Data -> Heatpump Status");
 
-    // TEMPORARY 2026-09-02: one-line raw dump of this exact packet's relevant
-    // bytes, added specifically to reverse-engineer why Input Power reads a
-    // fixed 255W while idle (real idle draw ~14W) instead of a decode-offset
-    // guess. INFO level so it shows with the existing `logger: level: INFO` --
-    // no logger config changes needed. Remove once the real idle-state
-    // encoding for data[5]/data[6] is confirmed and input power is fixed.
-    ESP_LOGI("Decoder", "RAW 0x06 status: op=data[4]=0x%02X freq=data[3]=0x%02X ip_hi=data[5]=0x%02X ip_lo=data[6]=0x%02X eu_hi=data[7]=0x%02X eu_lo=data[8]=0x%02X",
-        data[4], data[3], data[5], data[6], data[7], data[8]);
-
     // reset counter (because a reply indicates it is connected)
     this->nonResponseCounter = 0;
     receivedStatus.operating = data[4];
@@ -390,7 +381,20 @@ void CN105Climate::getOperatingAndCompressorFreqFromResponsePacket() {
         strcmp(this->currentSettings.stage, STAGE_MAP[0 /*IDLE*/]) != 0;
     receivedStatus.compressorFrequency = (data[4] || stage_is_active) ? data[3] : 0;
 
-    receivedStatus.inputPower = convert_input_power_to_W(float((data[5] << 8) | data[6]));
+    // PATCHED 2026-09-02: confirmed via raw packet capture (Chris's own hardware,
+    // idle) that data[5]=0x00, data[6]=0xFF -- raw 16-bit value 0x00FF (255) --
+    // is what this unit sends in the input-power field while it isn't actively
+    // metering, not a real wattage reading. The old code took it at face value
+    // and displayed a fake "255W" at idle. Confirmed by Chris: the field reports
+    // real, accurate wattage once the compressor is genuinely modulating, so this
+    // is a sentinel specific to the not-measuring state, not a wrong byte offset.
+    // Treated as "no real reading" -> report 0W rather than the sentinel value.
+    uint16_t raw_input_power_word = static_cast<uint16_t>((data[5] << 8) | data[6]);
+    if (raw_input_power_word == 0x00FF) {
+        receivedStatus.inputPower = 0.0f;
+    } else {
+        receivedStatus.inputPower = convert_input_power_to_W(float(raw_input_power_word));
+    }
     receivedStatus.kWh = convert_energy_usage_to_kWh(float((data[7] << 8) | data[8]));
 
     // no change with this packet to roomTemperature
