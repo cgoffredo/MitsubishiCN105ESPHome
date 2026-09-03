@@ -229,26 +229,33 @@ bool CN105Climate::processTemperatureChange(const esphome::climate::ClimateCall&
             this->setTargetTemperature(temp_single);
             ESP_LOGI("control", "Setting heatpump setpoint : %.1f", this->getTargetTemperature());
 
-            // PATCHED 2026-09-02: updateAction()'s CLIMATE_MODE_AUTO and
-            // CLIMATE_MODE_HEAT_COOL branches unconditionally compare current
-            // temperature against getTargetTemperatureLow()/High() to decide
-            // heating vs cooling vs idle -- regardless of whether dual-setpoint
-            // UI support is enabled. On a single-setpoint config (this branch),
-            // nothing ever wrote target_temperature_low/high, so that comparison
-            // ran against stale/default values with no relationship to the real
-            // setpoint (see the NaN-handling fix in localization.h for how badly
-            // that degraded in practice). Mirror the same half_span band
-            // handleSingleTargetInAutoOrDry() already builds for the dual-setpoint
-            // case, so the AUTO/HEAT_COOL action calculation has a real band
-            // derived from your actual setpoint, whether or not the dual-setpoint
-            // UI is turned on.
-            if (this->mode == climate::CLIMATE_MODE_AUTO || this->mode == climate::CLIMATE_MODE_HEAT_COOL) {
-                const float half_span = 2.0f;
-                this->setTargetTemperatureLow(temp_single - half_span);
-                this->setTargetTemperatureHigh(temp_single + half_span);
-                ESP_LOGD("control", "Single-setpoint AUTO/HEAT_COOL action band: %.1f => [%.1f - %.1f]",
-                    temp_single, this->getTargetTemperatureLow(), this->getTargetTemperatureHigh());
-            }
+            // REVERTED 2026-09-03: the 2026-09-02 patch here unconditionally called
+            // setTargetTemperatureLow()/High() on every single call to this branch,
+            // using a value (temp_single) that had already been through
+            // normalizeUiTemperatureToHeatpumpTemperature(). That's exactly the
+            // scenario the codebase's OWN existing comment in
+            // updateTargetTemperaturesFromSettings() (utils.cpp) warns about --
+            // "issue #673: with fahrenheit_compatibility the non-idempotent table
+            // round-trip ratchets the band +0.5C per pass until it parks 1.0C above
+            // the requested values" -- because normalizeUiTemperatureToHeatpumpTemperature()
+            // (UI->heatpump, table-snapped) and normalizeHeatpumpTemperatureToUiTemperature()
+            // (heatpump->UI, linear-Fahrenheit-then-/1.8) are NOT true inverses of each
+            // other. updateTargetTemperaturesFromSettings() already guards against this
+            // (skips recentering when low/high are already both defined) and is already
+            // the mechanism that populates target_temperature_low/high for real, safely
+            // (called from hp_readings.cpp/hp_writings.cpp on confirmed settings, not on
+            // every raw UI call). This patch duplicated similar band logic in an
+            // unguarded spot and re-triggered the exact ratcheting bug the original
+            // authors had already found and fixed elsewhere -- confirmed as the real
+            // cause of a live setpoint-corruption incident (73F requested, unit
+            // received/settled near current room temp instead; Action stuck on Idle
+            // despite operating=YES because the corrupted band made the deadband
+            // calculation itself compute Idle). Reverted outright rather than
+            // re-attempted live. See esp32-cn105-bridge-build.md for the full incident
+            // writeup. If Action's AUTO/HEAT_COOL deadband still needs a populated band
+            // for a single-setpoint config, that has to go through
+            // updateTargetTemperaturesFromSettings()'s already-guarded path, not a new
+            // unconditional call here.
         }
     }
 
