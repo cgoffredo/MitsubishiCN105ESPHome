@@ -366,21 +366,6 @@ void CN105Climate::getOperatingAndCompressorFreqFromResponsePacket() {
     this->nonResponseCounter = 0;
     receivedStatus.operating = data[4];
 
-    // PATCHED 2026-09-01: stock logic zeroed compressorFrequency whenever data[4]
-    // ("operating") read false, to avoid reporting sensor noise on models where
-    // that byte is noisy while genuinely idle. On this unit, data[4] is the SAME
-    // byte already known to be an unreliable "is it really running" indicator --
-    // see setActionIfOperatingTo() below and its stage-based fallback
-    // (use_as_operating_fallback, added for issue #277 on ducted units). Mirroring
-    // that exact fallback here instead of deleting the guard outright, so this
-    // stays as conservative as the already-proven-correct Action logic: report
-    // the real byte whenever EITHER operating is true OR stage indicates
-    // activity, and only fall back to 0 when neither says anything is happening.
-    bool stage_is_active = this->use_stage_for_operating_status_ &&
-        this->currentSettings.stage != nullptr &&
-        strcmp(this->currentSettings.stage, STAGE_MAP[0 /*IDLE*/]) != 0;
-    receivedStatus.compressorFrequency = (data[4] || stage_is_active) ? data[3] : 0;
-
     // PATCHED 2026-09-02: confirmed via raw packet capture (Chris's own hardware,
     // idle) that data[5]=0x00, data[6]=0xFF -- raw 16-bit value 0x00FF (255) --
     // is what this unit sends in the input-power field while it isn't actively
@@ -389,12 +374,34 @@ void CN105Climate::getOperatingAndCompressorFreqFromResponsePacket() {
     // real, accurate wattage once the compressor is genuinely modulating, so this
     // is a sentinel specific to the not-measuring state, not a wrong byte offset.
     // Treated as "no real reading" -> report 0W rather than the sentinel value.
+    // Computed here (before compressorFrequency below) because compressorFrequency's
+    // fallback now reuses this same value.
     uint16_t raw_input_power_word = static_cast<uint16_t>((data[5] << 8) | data[6]);
     if (raw_input_power_word == 0x00FF) {
         receivedStatus.inputPower = 0.0f;
     } else {
         receivedStatus.inputPower = convert_input_power_to_W(float(raw_input_power_word));
     }
+
+    // PATCHED 2026-09-01: stock logic zeroed compressorFrequency whenever data[4]
+    // ("operating") read false, to avoid reporting sensor noise on models where
+    // that byte is noisy while genuinely idle.
+    //
+    // PATCHED 2026-09-02: originally mirrored the Stage-based fallback used in
+    // setActionIfOperatingTo() (below), but Stage on this unit tracks continuous
+    // blower circulation, not compressor demand, and has never once reported
+    // IDLE -- so that fallback was permanently open regardless of real activity.
+    // Switched to the same Input Power fallback now used for Action, since that
+    // field's own decode bug (the 0x00FF idle sentinel, fixed just above) is
+    // fixed: report the real byte whenever EITHER operating is true OR input
+    // power shows real draw, and only fall back to 0 when neither says anything
+    // is happening.
+    const float COMPRESSOR_FREQ_INPUT_POWER_EPSILON_W = 1.0f;
+    bool power_indicates_active = this->use_stage_for_operating_status_ &&
+        !std::isnan(receivedStatus.inputPower) &&
+        receivedStatus.inputPower > COMPRESSOR_FREQ_INPUT_POWER_EPSILON_W;
+    receivedStatus.compressorFrequency = (data[4] || power_indicates_active) ? data[3] : 0;
+
     receivedStatus.kWh = convert_energy_usage_to_kWh(float((data[7] << 8) | data[8]));
 
     // no change with this packet to roomTemperature
