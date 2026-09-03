@@ -552,29 +552,43 @@ void CN105Climate::controlMode() {
 
 void CN105Climate::setActionIfOperatingTo(climate::ClimateAction action_if_operating) {
 
-    // Determine if stage indicates activity (for fallback logic)
-    bool stage_is_active = this->use_stage_for_operating_status_ &&
-        this->currentSettings.stage != nullptr &&
-        strcmp(this->currentSettings.stage, STAGE_MAP[0 /*IDLE*/]) != 0;
+    // PATCHED 2026-09-02: Stage was the original fallback here (STAGE_MAP:
+    // IDLE/LOW/GENTLE/MEDIUM/MODERATE/HIGH/DIFFUSE), added for issue #277 on
+    // ducted units where the raw `operating` bit was unreliable. Confirmed on
+    // this unit that Stage tracks continuous blower circulation, not
+    // compressor demand -- it has never once reported IDLE, so the fallback
+    // was permanently open regardless of real activity.
+    //
+    // Switched to Input Power. That field itself had a separate bug (fixed
+    // above in getOperatingAndCompressorFreqFromResponsePacket): the unit
+    // sends a 0x00FF sentinel while not metering, which used to display as a
+    // fake 255W. Now that it correctly reports 0W at idle and real, accurate
+    // wattage once the compressor is genuinely modulating (confirmed by
+    // Chris), it's an actual usable signal -- anything above a small epsilon
+    // (not exactly 0) means real power draw is happening.
+    const float OPERATING_INPUT_POWER_EPSILON_W = 1.0f;
+    bool power_indicates_active = this->use_stage_for_operating_status_ &&
+        !std::isnan(this->currentStatus.inputPower) &&
+        this->currentStatus.inputPower > OPERATING_INPUT_POWER_EPSILON_W;
 
-    ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Setting action (operating: %s, stage_fallback_enabled: %s, stage: %s, stage_is_active: %s)",
+    ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Setting action (operating: %s, fallback_enabled: %s, input_power: %.1fW, power_indicates_active: %s)",
         this->currentStatus.operating ? "true" : "false",
         this->use_stage_for_operating_status_ ? "yes" : "no",
-        getIfNotNull(this->currentSettings.stage, "N/A"),
-        stage_is_active ? "yes" : "no");
+        this->currentStatus.inputPower,
+        power_indicates_active ? "yes" : "no");
 
-    // True fallback logic: operating OR (fallback enabled AND stage is active)
+    // True fallback logic: operating OR (fallback enabled AND input power says active)
     // This handles cases like 2-stage heating where compressor may be off but gas heating is active
     if (this->currentStatus.operating) {
         // Primary: compressor is running
         this->action = action_if_operating;
         ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Action set by operating status (compressor running)");
-    } else if (stage_is_active) {
-        // Fallback: compressor not running but stage indicates activity (e.g., gas heating)
+    } else if (power_indicates_active) {
+        // Fallback: compressor status bit not running but real power draw indicates activity
         this->action = action_if_operating;
-        ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Action set by stage fallback (stage: %s)", this->currentSettings.stage);
+        ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Action set by input-power fallback (%.1fW)", this->currentStatus.inputPower);
     } else {
-        // Neither operating nor stage indicates activity
+        // Neither operating nor input power indicates activity
         this->action = climate::CLIMATE_ACTION_IDLE;
         ESP_LOGD(LOG_OPERATING_STATUS_TAG, "Action set to IDLE (no activity detected)");
     }
