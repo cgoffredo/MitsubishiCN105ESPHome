@@ -243,8 +243,33 @@ void CN105Climate::set_error_code_sensor(esphome::text_sensor::TextSensor* error
 void CN105Climate::set_remote_temp_source(esphome::sensor::Sensor* source) {
     this->remote_temp_source_ = source;
     // Subscribe to source sensor state changes and auto-feed remote temperature
+    //
+    // PATCHED 2026-09-03: this used to hand the sensor's raw Celsius value
+    // (a naive linear F->C conversion done in the bridge yaml's room_temp
+    // filter) straight to set_remote_temperature(), which stores it as-is
+    // with no further conversion. That's inconsistent with how setpoints are
+    // handled: processTemperatureChange() runs call.get_target_temperature()
+    // through fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature()
+    // first, snapping it to the exact Celsius value Mitsubishi's own firmware
+    // table associates with the nearest whole Fahrenheit degree -- not a
+    // naive linear conversion. Skipping that step here meant a room temp
+    // like 71F (linear: 21.667C) got encoded (encode_remote_temperature's own
+    // round-to-nearest-0.5C) as 21.5C -- the unit's real "70F" notch -- so
+    // even a fully-adopted remote temperature would read back as 70F, a full
+    // degree off from what was actually pushed. Applying the same
+    // normalization here that setpoints already use makes 71F resolve to the
+    // table's exact 22.0C entry, which round-trips back through
+    // normalizeHeatpumpTemperatureToUiTemperature() to display exactly 71F --
+    // matching what's actually supplied, the way this mechanism is meant to
+    // work. Deliberately NOT applied inside set_remote_temperature() itself:
+    // that function is also called directly with a literal 0 (cn105.cpp,
+    // pingExternalTemperature's timeout fallback) as a "disabled/reset"
+    // sentinel checked via remoteTemperature_ > 0 elsewhere -- normalizing
+    // that call too would turn 0 into the table's lowest entry (~16C) and
+    // break the timeout/disable logic. Scoping the fix to this one real
+    // sensor-fed call site avoids that.
     source->add_on_state_callback([this](float value) {
-        this->set_remote_temperature(value);
+        this->set_remote_temperature(this->fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature(value));
     });
 }
 
