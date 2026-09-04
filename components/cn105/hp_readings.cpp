@@ -339,6 +339,18 @@ void CN105Climate::getRoomTemperatureFromResponsePacket() {
                 is_remote = true;
             }
         }
+        // TEMPORARY 2026-09-04: diagnostic dump for the "permanently disconnected"
+        // regression seen right after this check was pointed at
+        // remoteTemperatureLinear_ instead of remoteTemperature_. INFO level so
+        // it shows with the existing `logger: level: INFO` -- no logger config
+        // change needed. Remove once the real cause is confirmed from these
+        // numbers.
+        ESP_LOGI(LOG_REMOTE_TEMP, "Remote-temp check: unit_room_c=%.2f pushed_linear_c=%.2f diff=%.2f margin=%.2f keepalive_active=%s -> %s",
+            receivedStatus.roomTemperature, this->remoteTemperatureLinear_,
+            abs(receivedStatus.roomTemperature - this->remoteTemperatureLinear_),
+            this->remote_temp_margin_,
+            this->remote_temp_keepalive_active_ ? "yes" : "no",
+            is_remote ? "CONNECTED" : "DISCONNECTED");
         this->remote_temp_sensor_->publish_state(is_remote);
     }
 
