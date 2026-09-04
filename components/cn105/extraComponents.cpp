@@ -268,7 +268,17 @@ void CN105Climate::set_remote_temp_source(esphome::sensor::Sensor* source) {
     // that call too would turn 0 into the table's lowest entry (~16C) and
     // break the timeout/disable logic. Scoping the fix to this one real
     // sensor-fed call site avoids that.
+    //
+    // PATCHED 2026-09-04: this fix made what's SENT to the unit table-snapped,
+    // but the "Remote Temperature Control Active" margin check in
+    // hp_readings.cpp was still comparing that same table-snapped value
+    // against the unit's raw 0.5°C-grid reading -- coupling a display
+    // accuracy fix to an unrelated connectivity check. Store the plain linear
+    // conversion separately (remoteTemperatureLinear_) purely for that
+    // comparison, so the margin check works the same way it did before this
+    // fix landed, while the unit still gets the table-snapped value.
     source->add_on_state_callback([this](float value) {
+        this->remoteTemperatureLinear_ = value;
         this->set_remote_temperature(this->fahrenheitSupport_.normalizeUiTemperatureToHeatpumpTemperature(value));
     });
 }
