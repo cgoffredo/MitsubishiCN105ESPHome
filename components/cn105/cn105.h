@@ -298,6 +298,17 @@ namespace esphome {
         // bool isHeatpumpConnected_ → isHeatpumpConnected()
         bool shouldSendExternalTemperature_ = false;
         float remoteTemperature_ = 0;
+        // PATCHED 2026-09-04: what's actually SENT to the unit (remoteTemperature_)
+        // is table-snapped (fahrenheitSupport_) so a whole-°F push round-trips back
+        // to the same whole °F on display -- see the 2026-09-03 fix in
+        // extraComponents.cpp. But the "Remote Temperature Control Active" sensor
+        // in hp_readings.cpp compares that value raw-Celsius against the unit's own
+        // 0.5°C-grid reading. This is the plain, un-table-snapped linear conversion
+        // of the same source sensor reading, kept ONLY for that comparison, so the
+        // margin check goes back to comparing against the same kind of value it did
+        // before the table-snapping was introduced -- while the unit still receives
+        // the table-snapped, display-accurate value untouched.
+        float remoteTemperatureLinear_ = 0;
 
         unsigned long nbCompleteCycles_ = 0;
         unsigned long nbCycles_ = 0;
