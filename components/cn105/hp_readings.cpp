@@ -323,31 +323,32 @@ void CN105Climate::getRoomTemperatureFromResponsePacket() {
 
     // Update the remote temperature control sensor (Issue 290)
     //
-    // PATCHED 2026-09-04: compares against remoteTemperatureLinear_ (the plain
-    // linear F->C conversion of the source sensor), not remoteTemperature_
-    // (what's actually sent to the unit, table-snapped as of 2026-09-03 so a
-    // whole-°F push round-trips back to the same whole °F on display). Those
-    // are two different jobs -- what gets sent to the unit should stay
-    // table-snapped for display accuracy; this check just needs to know
-    // whether the unit's own reading is tracking the source sensor, which is
-    // what it compared against before the table-snapping was introduced.
+    // REVERTED 2026-09-05: the 2026-09-04 patch here compared against
+    // remoteTemperatureLinear_ (plain linear F->C, no table), on the theory
+    // that the table-snapped remoteTemperature_ was introducing noise. Proven
+    // wrong by direct calculation against real log data: running the pushed
+    // value through the SAME table the unit's own reading is already anchored
+    // to (remoteTemperature_ -- what's actually sent to the unit, table-snapped
+    // since 2026-09-03) matches the unit's reported value exactly (0.00 diff)
+    // for both real samples checked. Comparing table-to-linear was the actual
+    // bug, introduced by the 2026-09-04 change -- back to comparing
+    // remoteTemperature_ against the unit's reading, table-to-table.
     if (this->remote_temp_sensor_ != nullptr) {
         bool is_remote = false;
-        if (this->remote_temp_keepalive_active_ && this->remoteTemperatureLinear_ > 0) {
-            float diff = abs(receivedStatus.roomTemperature - this->remoteTemperatureLinear_);
+        if (this->remote_temp_keepalive_active_ && this->remoteTemperature_ > 0) {
+            float diff = abs(receivedStatus.roomTemperature - this->remoteTemperature_);
             if (diff <= this->remote_temp_margin_) {
                 is_remote = true;
             }
         }
-        // TEMPORARY 2026-09-04: diagnostic dump for the "permanently disconnected"
-        // regression seen right after this check was pointed at
-        // remoteTemperatureLinear_ instead of remoteTemperature_. INFO level so
-        // it shows with the existing `logger: level: INFO` -- no logger config
-        // change needed. Remove once the real cause is confirmed from these
-        // numbers.
-        ESP_LOGI(LOG_REMOTE_TEMP, "Remote-temp check: unit_room_c=%.2f pushed_linear_c=%.2f diff=%.2f margin=%.2f keepalive_active=%s -> %s",
-            receivedStatus.roomTemperature, this->remoteTemperatureLinear_,
-            abs(receivedStatus.roomTemperature - this->remoteTemperatureLinear_),
+        // TEMPORARY 2026-09-05: keeping the diagnostic dump, now showing both
+        // the table-snapped pushed value (what's compared) and the raw linear
+        // value (for reference) so a future flip is easy to check by hand.
+        // INFO level, no logger config change needed. Remove once confirmed
+        // stable.
+        ESP_LOGI(LOG_REMOTE_TEMP, "Remote-temp check: unit_room_c=%.2f pushed_table_c=%.2f pushed_linear_c=%.2f diff=%.2f margin=%.2f keepalive_active=%s -> %s",
+            receivedStatus.roomTemperature, this->remoteTemperature_, this->remoteTemperatureLinear_,
+            abs(receivedStatus.roomTemperature - this->remoteTemperature_),
             this->remote_temp_margin_,
             this->remote_temp_keepalive_active_ ? "yes" : "no",
             is_remote ? "CONNECTED" : "DISCONNECTED");
