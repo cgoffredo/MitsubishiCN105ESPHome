@@ -401,6 +401,22 @@ void CN105Climate::getOperatingAndCompressorFreqFromResponsePacket() {
     uint16_t raw_input_power_word = static_cast<uint16_t>((data[5] << 8) | data[6]);
     if (raw_input_power_word == 0x00FF) {
         receivedStatus.inputPower = 0.0f;
+    } else if (data[4] == 0) {
+        // PATCHED 2026-09-19: a second idle behavior found in the field. Some
+        // units (observed on an SVZ-AP48NL / SUZ-AK48NLHZ Hyper Heat, confirmed
+        // via debug log against a revenue-grade meter) do NOT send the 0x00FF
+        // sentinel when idle -- they keep re-sending the last real wattage the
+        // compressor drew (e.g. 575W) for as long as the unit sits in standby,
+        // while the very same packet correctly reports operating=0 and
+        // compressor freq=0. The 0x00FF check above never fires on these units,
+        // so the stale reading was published indefinitely and graphs showed
+        // hundreds of phantom watts while the unit drew ~0. The field is only
+        // metered while the compressor runs (data[4] = operating); at standby
+        // it carries no real measurement on either unit family observed, so
+        // report 0W rather than the stale value. Tradeoff noted: if a unit ever
+        // reports genuine standby draw (e.g. fan) in this field, this zeroes
+        // it -- but both families observed so far stop metering at standby.
+        receivedStatus.inputPower = 0.0f;
     } else {
         receivedStatus.inputPower = convert_input_power_to_W(float(raw_input_power_word));
     }
