@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <vector>
 #include <utility>
@@ -601,6 +602,33 @@ void CN105Climate::updateAction() {
     case climate::CLIMATE_MODE_HEAT_COOL:
         if (this->traits().supports_mode(climate::CLIMATE_MODE_HEAT) &&
             this->traits().supports_mode(climate::CLIMATE_MODE_COOL)) {
+            // PATCHED 2026-09-19: in hardware AUTO, prefer the unit's own
+            // reported auto sub-mode over deadband math. The deadband
+            // comparison runs on raw converted temps and can disagree with
+            // the unit's actual decision at the boundary -- observed in the
+            // field (SVZ Hyper Heat): unit reporting AUTO_HEAT and
+            // operating while HA showed "Cooling" with current == target
+            // (display rounding tips the raw comparison over). The sub-mode
+            // is already decoded for the Auto Sub Mode sensor; use it when
+            // known, fall back to deadband below otherwise.
+            const char* auto_sub = this->currentSettings.auto_sub_mode;
+            if (auto_sub != nullptr) {
+                if (strcmp(auto_sub, "AUTO_HEAT") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
+                    break;
+                }
+                if (strcmp(auto_sub, "AUTO_COOL") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
+                    break;
+                }
+                if (strcmp(auto_sub, "AUTO_OFF") == 0 ||
+                    strcmp(auto_sub, "AUTO_IDLE") == 0 ||
+                    strcmp(auto_sub, "AUTO_INACTIVE") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_IDLE);
+                    break;
+                }
+                // AUTO_LEADER / AUTO_ACTIVE / unmapped: fall through to deadband
+            }
             // Logique Deadband pour HEAT_COOL
             if (this->getCurrentTemperature() >= this->getTargetTemperatureHigh()) {
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
