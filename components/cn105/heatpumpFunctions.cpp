@@ -49,6 +49,10 @@ void CN105Climate::functionsArrived() {
 
 bool CN105Climate::setFunctions(heatpumpFunctions const& functions) {
     if (!functions.isValid()) {
+        // PATCH 2026-09-20: the old code aborted silently here, which made
+        // an incomplete table (only one of 0x20/0x22 ever read) look
+        // exactly like a unit-side write rejection. Log it.
+        ESP_LOGW(TAG, "setFunctions: function table incomplete (both 0x20 and 0x22 reads required) -- write aborted");
         return false;
     }
 
@@ -83,18 +87,33 @@ bool CN105Climate::setFunctions(heatpumpFunctions const& functions) {
             //esphome::CUSTOM_DELAY(10);
             CUSTOM_DELAY(10);
         }*/
+
+    // PATCH 2026-09-20: pre-write snapshot of the full table, so the
+    // verification re-read (functionsArrived -> Functions sensor) can be
+    // diffed against it in the log. Zero slots = unsupported codes; if
+    // the unit rejects tables containing them, this is where we see it.
+    char snap[64];
+    snprintf(snap, sizeof(snap), "p1=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+             packet1[6], packet1[7], packet1[8], packet1[9], packet1[10],
+             packet1[11], packet1[12], packet1[13], packet1[14], packet1[15],
+             packet1[16], packet1[17], packet1[18], packet1[19], packet1[20]);
+    ESP_LOGI(TAG, "setFunctions snapshot: %s", snap);
+    snprintf(snap, sizeof(snap), "p2=%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
+             packet2[6], packet2[7], packet2[8], packet2[9], packet2[10],
+             packet2[11], packet2[12], packet2[13], packet2[14], packet2[15],
+             packet2[16], packet2[17], packet2[18], packet2[19], packet2[20]);
+    ESP_LOGI(TAG, "setFunctions snapshot: %s", snap);
+
     ESP_LOGD(TAG, "sending a setFunctions packet part 1");
     writePacket(packet1, PACKET_LEN);
     //readPacket();
 
-    /*while (!canSend(false)) {
-        //esphome::CUSTOM_DELAY(10);
-        CUSTOM_DELAY(10);
-    }*/
     ESP_LOGD(TAG, "sending a setFunctions packet part 2");
     writePacket(packet2, PACKET_LEN);
     //readPacket();
 
+    // PATCH 2026-09-20: tell the observer what to look for next.
+    ESP_LOGI(TAG, "setFunctions: both parts sent -- watch for FC 61 ACKs, then the verification re-read");
     return true;
 }
 
