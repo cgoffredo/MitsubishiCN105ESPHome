@@ -649,6 +649,32 @@ void CN105Climate::updateAction() {
             // PATCHED 2026-09-03: below setpoint => Heat, else => Cool.
             // Idle comes entirely from the operating gate in
             // setActionIfOperatingTo(), not from this comparison.
+            //
+            // PATCHED 2026-09-22: prefer the unit's reported auto sub-mode
+            // over this comparison. The 2026-09-19 version of this fix was
+            // placed in CLIMATE_MODE_HEAT_COOL, but this unit family maps
+            // Mitsubishi AUTO to CLIMATE_MODE_AUTO -- that case never ran,
+            // and at current == target the comparison below takes the else
+            // branch and labels active heating as "Cooling" (observed in
+            // the field: AUTO_HEAT sub-mode, unit heating, HA cooling).
+            // AUTO_LEADER / AUTO_ACTIVE / unknown still fall through.
+            const char* auto_sub = this->currentSettings.auto_sub_mode;
+            if (auto_sub != nullptr) {
+                if (strcmp(auto_sub, "AUTO_HEAT") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
+                    break;
+                }
+                if (strcmp(auto_sub, "AUTO_COOL") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
+                    break;
+                }
+                if (strcmp(auto_sub, "AUTO_OFF") == 0 ||
+                    strcmp(auto_sub, "AUTO_IDLE") == 0 ||
+                    strcmp(auto_sub, "AUTO_INACTIVE") == 0) {
+                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_IDLE);
+                    break;
+                }
+            }
             if (this->getCurrentTemperature() < this->getTargetTemperature()) {
                 this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
             } else {
