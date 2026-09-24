@@ -658,14 +658,34 @@ void CN105Climate::updateAction() {
             // branch and labels active heating as "Cooling" (observed in
             // the field: AUTO_HEAT sub-mode, unit heating, HA cooling).
             // AUTO_LEADER / AUTO_ACTIVE / unknown still fall through.
+            //
+            // PATCHED 2026-09-24: gate the direction on actual demand.
+            // This unit family reports operating:YES at the satisfied
+            // boundary (fan already dropped to thermal-off, power at the
+            // not-metering sentinel), so the operating bit alone
+            // mislabels satisfied-idle as active. Observed 2026-09-24:
+            // 15+ min of "Cooling" with room == target, fan at ultra-low,
+            // 0 W, compressor 0 Hz -- the unit knew it was not cooling.
+            // Direction now only counts as active while the room is on
+            // the demanding side of the target; at or past the target
+            // the action is IDLE. During a real call this is identical
+            // to the 2026-09-22 behavior.
             const char* auto_sub = this->currentSettings.auto_sub_mode;
             if (auto_sub != nullptr) {
                 if (strcmp(auto_sub, "AUTO_HEAT") == 0) {
-                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
+                    if (this->getCurrentTemperature() < this->getTargetTemperature()) {
+                        this->setActionIfOperatingTo(climate::CLIMATE_ACTION_HEATING);
+                    } else {
+                        this->setActionIfOperatingTo(climate::CLIMATE_ACTION_IDLE);
+                    }
                     break;
                 }
                 if (strcmp(auto_sub, "AUTO_COOL") == 0) {
-                    this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
+                    if (this->getCurrentTemperature() > this->getTargetTemperature()) {
+                        this->setActionIfOperatingTo(climate::CLIMATE_ACTION_COOLING);
+                    } else {
+                        this->setActionIfOperatingTo(climate::CLIMATE_ACTION_IDLE);
+                    }
                     break;
                 }
                 if (strcmp(auto_sub, "AUTO_OFF") == 0 ||
